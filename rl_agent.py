@@ -15,8 +15,8 @@ class RLAgent:
         self.epsilon_min = 0.0
         self.epsilon_decay = 0.5
         self.model = None
-        self.MIN_VAL = 99.
-        self.MAX_VAL = 101.
+        self.MIN_VAL = 99.5
+        self.MAX_VAL = 100.5
         self.D = int(((self.MAX_VAL - self.MIN_VAL) * 100) + 1)
 
     def remember(self, sar):
@@ -57,7 +57,12 @@ class RLAgent:
         # map spread value to an index...
         idx = (s[0] - self.MIN_VAL) * 100
 
-        return int(idx)
+        if idx < 0.:
+            return 0
+        elif idx > self.D - 1:
+            return self.D - 1
+        else:
+            return int(idx)
 
     def replay(self):
 
@@ -91,11 +96,13 @@ class RLAgent:
         qvalues = np.array(full_tensor)
         print "full_tensor shape = ", qvalues.shape
 
+        # TODO: re-add current position to state and fix my whole assumption about flat being always 0. It only is when trying to enter... Also re-add the 3-fold effect
+        # on states.
 
-        # TODO: why does the more trained domain have a higher variance? Shouldn't increased certainty correlate with
-        # lower variance???
+        # TODO: why is the first training batch so small compared to the next one?
 
-        # TODO: why is it not learning anything above X = 125?
+        # TODO: instead of re-training at every loop on the full dataset, use the previous training iterations, priors and only train incrementally
+
 
         with pm.Model() as self.model:
 
@@ -105,20 +112,20 @@ class RLAgent:
                     idx0 = tt.cast(value[:, 0], dtype='int8')
                     idx1 = tt.cast(value[:, 1], dtype='int8')
                     return pm.Normal.dist(mu=Qmus[idx0, idx1], sd=np.exp(Qsds[idx0, idx1])).logp(value[:, 2])
-                    #return pm.Normal.dist(mu=Qmus[idx0, idx1], sd=Qsds[idx0, idx1]).logp(value[:, 2])
 
                 return _logp
 
+            # Average training P&L = 4.2
+            # Qmus = pm.Normal('Qmus', mu=0., sd=1., shape=[2, self.D])
+            # Qsds = pm.Normal('Qsds', mu=0., sd=10., shape=[2, self.D])
             Qmus = pm.Normal('Qmus', mu=0., sd=1., shape=[2, self.D])
-            Qsds = pm.Normal('Qsds', mu=-1., sd=.01, shape=[2, self.D])
-            # Qmus = pm.Uniform('Qmus', lower=-1., upper=1., shape=[2, self.D])
-            # Qsds = pm.Uniform('Qsds', lower=0.01, upper=0.2, shape=[2, self.D])
+            Qsds = pm.Normal('Qsds', mu=-15., sd=10., shape=[2, self.D])
 
             pm.DensityDist('Qtable',
                            likelihood(Qmus, Qsds),
                            observed=qvalues)
 
-            mean_field = pm.fit(n=8000, method='advi', obj_optimizer=pm.adam(learning_rate=.15))
+            mean_field = pm.fit(n=10000, method='advi', obj_optimizer=pm.adam(learning_rate=.25))
             self.trace = mean_field.sample(5000)
 
             #self.trace = pm.sample(1000, tune=1000)
@@ -126,15 +133,10 @@ class RLAgent:
         self.Qmus_estimates = np.mean(self.trace['Qmus'], axis=0)
         self.Qsds_estimates = np.median(self.trace['Qsds'], axis=0)
 
-        fig, (ax1, ax2) = plt.subplots(1, 2)
-
-        ax1.plot(self.Qmus_estimates[0])
-        ax1.set_title("Q-values for Short action")
-
-        ax2.plot(self.Qsds_estimates[0])
-        ax2.set_title("Certainties for Short action")
-
-        plt.show()
+        # plt.plot(self.Qmus_estimates[0])
+        # plt.title("Q-values for Short action")
+        #
+        # plt.show()
 
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay

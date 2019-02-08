@@ -25,7 +25,7 @@ def run_simulation(x, y, agent, train_agent=False):
                 discount_factor *= DISCOUNT_DECAY
 
         if t+tau < len(episodeSARs):
-            final_state = [episodeSARs[t+tau][0], episodeSARs[t+tau][1]]
+            final_state = [episodeSARs[t+tau][0]]
             Q = agent.getMaxQ(final_state)
 
             return expected_future_pnl + DISCOUNT_DECAY * Q
@@ -51,15 +51,15 @@ def run_simulation(x, y, agent, train_agent=False):
 
         if train_agent:
             reward = current_reward(t, current_position)
-            sar = [state[0], state[1], action, reward]
+            sar = [state[0], action, reward]
             episodeSARs.append(sar)
 
     if train_agent:
         for t in range(len(episodeSARs)):
             expected_future_pnl = calculate_expected_reward_TD(t, episodeSARs)
 
-            reward_label = episodeSARs[t][3] + expected_future_pnl
-            tmpSAR = [episodeSARs[t][0], episodeSARs[t][1], episodeSARs[t][2], reward_label]
+            reward_label = episodeSARs[t][2] + expected_future_pnl
+            tmpSAR = [episodeSARs[t][0], episodeSARs[t][2], reward_label]
 
             agent.remember(tmpSAR)
 
@@ -85,7 +85,7 @@ plt.show()
 
 print "Training the agent..."
 # 2. train the agent on that trajectory, show that it learned some optimum
-agent = RLAgent(2, 3)
+agent = RLAgent(1, 3)
 training_pnls = []
 DELTA = 20
 for j in range(NUM_TRAINING_ITERATIONS):
