@@ -11,11 +11,19 @@ class RLAgent:
     def __init__(self, state_size, action_size):
         self.state_size = state_size
         self.action_size = action_size
-        self.memory = deque(maxlen=100000)
+        self.memory = deque(maxlen=20000)
         self.model = None
         self.MIN_VAL = 99.5
         self.MAX_VAL = 100.5
-        self.D = int(((self.MAX_VAL - self.MIN_VAL) * 10) + 1) * 3  # times 3 for the 3 possible current_position values
+        self.D = int(((self.MAX_VAL - self.MIN_VAL) * 10) * 3) + 1  # times 3 for the 3 possible current_position values
+        self.Qmus_estimates_mu = np.zeros((3, self.D))
+        self.Qmus_estimates_sd = np.ones((3, self.D))
+
+        self.Qsds_estimates_mu = np.ones((3, self.D)) * -2.
+        self.Qsds_estimates_sd = np.ones((3, self.D)) * 10.
+
+    def reset_memory(self):
+        self.memory = deque(maxlen=20000)
 
     def remember(self, sar):
         self.memory.append(sar)
@@ -104,7 +112,6 @@ class RLAgent:
         return int((pos_idx * range) + idx)
 
     def replay(self):
-
         mem = np.array(self.memory)
 
         states = mem[:, :self.state_size]
@@ -140,13 +147,6 @@ class RLAgent:
         # 3 - reward
         qvalues = np.array(full_tensor)
 
-        # TODO: #1) instead of re-training at every loop on the full dataset, use the previous training iterations,
-        # priors and only train incrementally
-
-        # TODO: #2) indices 10, 20 and 30 have huge spikes in uncertainty: why?
-
-        # TODO: #3) fix theano warning about deprecated use of multidimensional indexing
-
         with pm.Model() as self.model:
 
             def likelihood(Qmus, Qsds):
@@ -158,8 +158,8 @@ class RLAgent:
 
                 return _logp
 
-            Qmus = pm.Normal('Qmus', mu=0., sd=1., shape=[3, self.D])
-            Qsds = pm.Normal('Qsds', mu=-2., sd=10., shape=[3, self.D])
+            Qmus = pm.Normal('Qmus', mu=self.Qmus_estimates_mu, sd=self.Qmus_estimates_sd, shape=[3, self.D])
+            Qsds = pm.Normal('Qsds', mu=self.Qsds_estimates_mu, sd=self.Qsds_estimates_sd, shape=[3, self.D])
 
             pm.DensityDist('Qtable',
                            likelihood(Qmus, Qsds),
@@ -168,11 +168,16 @@ class RLAgent:
             mean_field = pm.fit(n=5000, method='advi', obj_optimizer=pm.adam(learning_rate=0.1))
             self.trace = mean_field.sample(5000)
 
-            #self.trace = pm.sample(1000, tune=1000)
-
         self.Qmus_estimates = np.mean(self.trace['Qmus'], axis=0)
         self.Qsds_estimates = np.median(self.trace['Qsds'], axis=0)
 
+        self.Qmus_estimates_mu = self.Qmus_estimates
+        self.Qmus_estimates_sd = np.std(self.trace['Qmus'], axis=0)
+
+        self.Qsds_estimates_mu = self.Qmus_estimates
+        self.Qsds_estimates_sd = np.std(self.trace['Qsds'], axis=0)
+
+        self.reset_memory()
         fig, axarr = plt.subplots(1, 2)
 
         axarr[0].plot(self.Qmus_estimates[0], color='red')
