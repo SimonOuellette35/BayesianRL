@@ -25,7 +25,7 @@ def run_simulation(x, y, agent, train_agent=False):
                 discount_factor *= DISCOUNT_DECAY
 
         if t+tau < len(episodeSARs):
-            final_state = [episodeSARs[t+tau][0]]
+            final_state = [episodeSARs[t+tau][0], episodeSARs[t+tau][1]]
             Q = agent.getMaxQ(final_state)
 
             return expected_future_pnl + DISCOUNT_DECAY * Q
@@ -44,35 +44,29 @@ def run_simulation(x, y, agent, train_agent=False):
             current_pnl += (y[t-1] - y[t]) + (x[t] - x[t-1])
 
         # summarize the current state of things, and query the agent for our next action
-        state = [y[t] - x[t]]
-        action = agent.act(state)
+        state = [y[t] - x[t], current_position]
+        action = agent.act(state, train_agent)
 
         current_position = action - 1
 
         if train_agent:
             reward = current_reward(t, current_position)
-            sar = [state[0], action, reward]
+            sar = [state[0], state[1], action, reward]
             episodeSARs.append(sar)
 
     if train_agent:
         for t in range(len(episodeSARs)):
             expected_future_pnl = calculate_expected_reward_TD(t, episodeSARs)
 
-            reward_label = episodeSARs[t][2] + expected_future_pnl
-            tmpSAR = [episodeSARs[t][0], episodeSARs[t][2], reward_label]
+            reward_label = episodeSARs[t][3] + expected_future_pnl
+            tmpSAR = [episodeSARs[t][0], episodeSARs[t][1], episodeSARs[t][2], reward_label]
 
             agent.remember(tmpSAR)
 
     return current_pnl
 
-NUM_TRAINING_ITERATIONS = 100
-NUM_TEST_ITERATIONS = 100
-
-# =================================================== Part 1 =======================================================
-print "Part 1: Optimizing on purely stationary time series"
-print "1. we get a specific historical realization of data from our stationary DGP."
-print "2. we train the agent on that trajectory."
-print "3. we test that trained agent on new data from the same DGP: we show that its performance generalizes well (as predicted)."
+NUM_TRAINING_ITERATIONS = 4
+NUM_TEST_ITERATIONS = 5
 
 in_samplePnLs = []
 out_samplePnLs = []
@@ -85,25 +79,24 @@ plt.show()
 
 print "Training the agent..."
 # 2. train the agent on that trajectory, show that it learned some optimum
-agent = RLAgent(1, 3)
+agent = RLAgent(2, 3)
 training_pnls = []
-DELTA = 20
-for j in range(NUM_TRAINING_ITERATIONS):
+for j in range(1, NUM_TRAINING_ITERATIONS+1):
     training_pnl = run_simulation(x, y, agent, True)
     training_pnls.append(training_pnl)
-    if j % DELTA == 0:
-        agent.replay()
+    agent.replay()
 
-        pct_progress = (float(j) / float(NUM_TRAINING_ITERATIONS)) * 100.0
-        if j == 0:
-            print "pct_progress = %s %%" % (pct_progress)
-        else:
-            print "pct_progress = %s %% (current average P&L is %s)" % (pct_progress, np.mean(training_pnls[-DELTA:]))
+    pct_progress = (float(j) / float(NUM_TRAINING_ITERATIONS)) * 100.0
+    if j == 0:
+        print "pct_progress = %s %%" % (pct_progress)
+    else:
+        print "pct_progress = %s %% (current average P&L is %s)" % (pct_progress, np.mean(training_pnls))
 
 agent.epsilon = 0.
 
 training_pnl = run_simulation(x, y, agent, False)
 print "Training P&L = ", training_pnl
+training_pnls.append(training_pnl)
 
 print "Testing the agent..."
 # 3. test the agent on a series of stationary trajectories, show that it generalizes
@@ -115,9 +108,9 @@ for j in range(NUM_TEST_ITERATIONS):
 fig, (ax1, ax2) = plt.subplots(1, 2, sharex=True, sharey=True)
 
 ax1.plot(training_pnls)
-ax1.set_title("Part 1 - In-sample P&Ls")
+ax1.set_title("Training P&Ls")
 ax2.plot(out_samplePnLs)
-ax2.set_title("Part 1 - Out-of-sample P&Ls")
+ax2.set_title("Validation P&Ls")
 plt.show()
 
 print "Average out-sample P&L across the tests: ", np.mean(out_samplePnLs)

@@ -11,14 +11,11 @@ class RLAgent:
     def __init__(self, state_size, action_size):
         self.state_size = state_size
         self.action_size = action_size
-        self.memory = deque(maxlen=500000)
-        self.epsilon = 1.0  # exploration rate
-        self.epsilon_min = 0.0
-        self.epsilon_decay = 0.5
+        self.memory = deque(maxlen=100000)
         self.model = None
         self.MIN_VAL = 99.5
         self.MAX_VAL = 100.5
-        self.D = int(((self.MAX_VAL - self.MIN_VAL) * 100) + 1)
+        self.D = int(((self.MAX_VAL - self.MIN_VAL) * 10) + 1) * 3  # times 3 for the 3 possible current_position values
 
     def remember(self, sar):
         self.memory.append(sar)
@@ -33,12 +30,12 @@ class RLAgent:
         action_slice = self.Qmus_estimates[:, self.state_value_to_index(state)]
         maxQ = np.max(action_slice, axis=0)
 
-        if maxQ < 0.:
-            return 0.       # we can just go flat, too
-        else:
-            return maxQ
+        return maxQ
 
     def act(self, state, use_explo=True):
+
+        if self.model is None:
+            return random.randrange(self.action_size)
 
         def calculate_VPI(mus, sds):
 
@@ -62,7 +59,7 @@ class RLAgent:
             x = np.random.uniform(Q_LOW, Q_HIGH, SAMPLE_SIZE)
             x = np.reshape(x, [-1, 1])
 
-            dist = st.norm(mus, sds)
+            dist = st.norm(mus, np.exp(sds))
 
             probs = dist.pdf(x)
 
@@ -76,31 +73,35 @@ class RLAgent:
 
             return np.mean(gains * probs, axis=0)
 
+        state_idx = self.state_value_to_index(state)
+        state_mus = self.Qmus_estimates[:, state_idx]
+        state_sds = self.Qsds_estimates[:, state_idx]
+
         if use_explo:
-           if np.random.rand() < self.epsilon or self.model is None:
-               return random.randrange(self.action_size)
+            VPI_per_action = calculate_VPI(state_mus, state_sds)
 
-        state_mus = self.Qmus_estimates[:, self.state_value_to_index(state)]
-        state_sds = self.Qsds_estimates[:, self.state_value_to_index(state)]
+            action_scores = VPI_per_action + state_mus
 
-        VPI_per_action = calculate_VPI(state_mus, state_sds)
+            idx_selected_action = np.argmax(action_scores)
 
-        action_scores = VPI_per_action + state_mus
-
-        idx_best_action = np.argmax(action_scores)
-
-        return idx_best_action
+            return idx_selected_action
+        else:
+            return np.argmax(state_mus)
 
     def state_value_to_index(self, s):
         # map spread value to an index...
-        idx = (s[0] - self.MIN_VAL) * 100
+        range = (self.MAX_VAL - self.MIN_VAL) * 10
+        idx = (s[0] - self.MIN_VAL) * 10
 
+        # round to hard boundaries, in case we receive state values that are beyond the pre-determined MIN and MAX
         if idx < 0.:
-            return 0
-        elif idx > self.D - 1:
-            return self.D - 1
-        else:
-            return int(idx)
+            idx = 0
+        elif idx > range:
+            idx = range
+
+        # and now adjust to the fact that there are 3 possible positions in the state vector
+        pos_idx = s[1] + 1
+        return int((pos_idx * range) + idx)
 
     def replay(self):
 
@@ -113,33 +114,38 @@ class RLAgent:
         full_tensor = []
         s_short = []
         r_short = []
+        s_long = []
+        r_long = []
         for t in range(len(states)):
 
             idx = self.state_value_to_index(states[t])
 
+            full_tensor.append(np.array([actions[t], idx, rewards[t]]))
+
             if actions[t] == 0:
-                full_tensor.append(np.array([0, idx, rewards[t]]))
                 s_short.append(idx)
                 r_short.append(rewards[t])
             elif actions[t] == 2:
-                full_tensor.append(np.array([1, idx, rewards[t]]))
+                s_long.append(idx)
+                r_long.append(rewards[t])
 
-        # plt.scatter(s_short, r_short)
-        # plt.show()
+        plt.scatter(s_short, r_short, color='red')
+        plt.scatter(s_long, r_long, color='green')
+        plt.title("State vs Reward scatter plot")
+        plt.show()
 
         # qvalues = [N x 3]
-        # 1 - action index (0 - short, 1 - long)
+        # 1 - action index
         # 2 - state index
         # 3 - reward
         qvalues = np.array(full_tensor)
-        print "full_tensor shape = ", qvalues.shape
 
-        # TODO: re-add current position to state and fix my whole assumption about flat being always 0. It only is
-        # when trying to enter... Also re-add the 3-fold effect on states.
+        # TODO: #1) instead of re-training at every loop on the full dataset, use the previous training iterations,
+        # priors and only train incrementally
 
-        # TODO: why is the first training batch so small compared to the next one?
+        # TODO: #2) indices 10, 20 and 30 have huge spikes in uncertainty: why?
 
-        # TODO: instead of re-training at every loop on the full dataset, use the previous training iterations, priors and only train incrementally
+        # TODO: #3) fix theano warning about deprecated use of multidimensional indexing
 
         with pm.Model() as self.model:
 
@@ -152,17 +158,14 @@ class RLAgent:
 
                 return _logp
 
-            # Average training P&L = 4.2
-            # Qmus = pm.Normal('Qmus', mu=0., sd=1., shape=[2, self.D])
-            # Qsds = pm.Normal('Qsds', mu=0., sd=10., shape=[2, self.D])
-            Qmus = pm.Normal('Qmus', mu=0., sd=1., shape=[2, self.D])
-            Qsds = pm.Normal('Qsds', mu=-15., sd=10., shape=[2, self.D])
+            Qmus = pm.Normal('Qmus', mu=0., sd=1., shape=[3, self.D])
+            Qsds = pm.Normal('Qsds', mu=-2., sd=10., shape=[3, self.D])
 
             pm.DensityDist('Qtable',
                            likelihood(Qmus, Qsds),
                            observed=qvalues)
 
-            mean_field = pm.fit(n=10000, method='advi', obj_optimizer=pm.adam(learning_rate=.25))
+            mean_field = pm.fit(n=5000, method='advi', obj_optimizer=pm.adam(learning_rate=0.1))
             self.trace = mean_field.sample(5000)
 
             #self.trace = pm.sample(1000, tune=1000)
@@ -170,10 +173,14 @@ class RLAgent:
         self.Qmus_estimates = np.mean(self.trace['Qmus'], axis=0)
         self.Qsds_estimates = np.median(self.trace['Qsds'], axis=0)
 
-        # plt.plot(self.Qmus_estimates[0])
-        # plt.title("Q-values for Short action")
-        #
-        # plt.show()
+        fig, axarr = plt.subplots(1, 2)
 
-        if self.epsilon > self.epsilon_min:
-            self.epsilon *= self.epsilon_decay
+        axarr[0].plot(self.Qmus_estimates[0], color='red')
+        axarr[0].plot(self.Qmus_estimates[2], color='green')
+        axarr[0].set_title("E[Q-values] for Short/Long action")
+
+        axarr[1].plot(self.Qsds_estimates[0], color='red')
+        axarr[1].plot(self.Qsds_estimates[2], color='green')
+        axarr[1].set_title("SD[Q-values] for Short/Long action")
+
+        plt.show()
