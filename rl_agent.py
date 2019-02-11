@@ -4,6 +4,7 @@ from collections import deque
 import pymc3 as pm
 import matplotlib.pyplot as plt
 import theano.tensor as tt
+import scipy.stats as st
 
 class RLAgent:
 
@@ -38,20 +39,57 @@ class RLAgent:
             return maxQ
 
     def act(self, state, use_explo=True):
+
+        def calculate_VPI(mus, sds):
+
+            def gain(i, i2, x):
+                gains = []
+                for j in range(len(mus)):
+                    if j == i:
+                        # special case: this is the best action
+                        g = mus[i2] - np.minimum(x, mus[i2])
+                    else:
+                        g = np.maximum(x, mus[i]) - mus[i]
+
+                    gains.append(g)
+
+                gains = np.reshape(np.array(gains), [-1, len(x)]).transpose()
+                return gains
+
+            SAMPLE_SIZE = 1000
+            Q_LOW = -1.
+            Q_HIGH = 1.
+            x = np.random.uniform(Q_LOW, Q_HIGH, SAMPLE_SIZE)
+            x = np.reshape(x, [-1, 1])
+
+            dist = st.norm(mus, sds)
+
+            probs = dist.pdf(x)
+
+            best_action_idx = np.argmax(mus)
+
+            tmp_mus = np.copy(mus)
+            tmp_mus[best_action_idx] = -9999.
+            second_best_action_idx = np.argmax(tmp_mus)
+
+            gains = gain(best_action_idx, second_best_action_idx, x)
+
+            return np.mean(gains * probs, axis=0)
+
         if use_explo:
            if np.random.rand() < self.epsilon or self.model is None:
                return random.randrange(self.action_size)
 
-        action_slice = self.Qmus_estimates[:, self.state_value_to_index(state)]
-        best_Q = np.max(action_slice)
-        idx_best_action = np.argmax(action_slice)
+        state_mus = self.Qmus_estimates[:, self.state_value_to_index(state)]
+        state_sds = self.Qsds_estimates[:, self.state_value_to_index(state)]
 
-        if best_Q < 0:
-            return 1.
-        elif idx_best_action == 0:
-            return 0.
-        else:
-            return 2.
+        VPI_per_action = calculate_VPI(state_mus, state_sds)
+
+        action_scores = VPI_per_action + state_mus
+
+        idx_best_action = np.argmax(action_scores)
+
+        return idx_best_action
 
     def state_value_to_index(self, s):
         # map spread value to an index...
@@ -96,13 +134,12 @@ class RLAgent:
         qvalues = np.array(full_tensor)
         print "full_tensor shape = ", qvalues.shape
 
-        # TODO: re-add current position to state and fix my whole assumption about flat being always 0. It only is when trying to enter... Also re-add the 3-fold effect
-        # on states.
+        # TODO: re-add current position to state and fix my whole assumption about flat being always 0. It only is
+        # when trying to enter... Also re-add the 3-fold effect on states.
 
         # TODO: why is the first training batch so small compared to the next one?
 
         # TODO: instead of re-training at every loop on the full dataset, use the previous training iterations, priors and only train incrementally
-
 
         with pm.Model() as self.model:
 
