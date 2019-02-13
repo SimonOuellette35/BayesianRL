@@ -155,21 +155,13 @@ class RLAgent:
 
         with pm.Model() as self.model:
 
-            def likelihood(Qmus, Qsds):
-
-                def _logp(value):
-                    idx0 = tt.cast(value[:, 0], dtype='int8')
-                    idx1 = tt.cast(value[:, 1], dtype='int8')
-                    return pm.Normal.dist(mu=Qmus[idx0, idx1], sd=np.exp(Qsds[idx0, idx1])).logp(value[:, 2])
-
-                return _logp
-
             Qmus = pm.Normal('Qmus', mu=self.Qmus_estimates_mu, sd=self.Qmus_estimates_sd, shape=[3, self.D])
             Qsds = pm.Normal('Qsds', mu=self.Qsds_estimates_mu, sd=self.Qsds_estimates_sd, shape=[3, self.D])
 
-            pm.DensityDist('Qtable',
-                           likelihood(Qmus, Qsds),
-                           observed=qvalues)
+            idx0 = qvalues[:, 0].astype(int)
+            idx1 = qvalues[:, 1].astype(int)
+
+            pm.Normal('likelihood', mu=Qmus[idx0, idx1], sd=np.exp(Qsds[idx0, idx1]), observed=qvalues[:, 2])
 
             mean_field = pm.fit(n=15000, method='advi', obj_optimizer=pm.adam(learning_rate=0.1))
             self.trace = mean_field.sample(5000)
