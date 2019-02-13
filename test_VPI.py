@@ -37,15 +37,15 @@ def calculate_VPI(mus, sds):
     x = np.random.uniform(Q_LOW, Q_HIGH, SAMPLE_SIZE)
     x = np.reshape(x, [-1, 1])
 
-    dist = st.norm(mus, sds)
+    dist = st.norm(mus, sds)                    # D(s, a)
 
-    probs = dist.pdf(x)
+    probs = dist.pdf(x)                         # P(D(s, a) = x)
 
-    best_action_idx = np.argmax(mus)
+    best_action_idx = np.argmax(mus)            # a1
 
     tmp_mus = np.copy(mus)
     tmp_mus[best_action_idx] = -9999.
-    second_best_action_idx = np.argmax(tmp_mus)
+    second_best_action_idx = np.argmax(tmp_mus) # a2
 
     gains = gain(best_action_idx, second_best_action_idx, x)
 

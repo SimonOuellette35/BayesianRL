@@ -13,8 +13,8 @@ class RLAgent:
         self.action_size = action_size
         self.memory = deque(maxlen=20000)
         self.model = None
-        self.MIN_VAL = 99.5
-        self.MAX_VAL = 100.5
+        self.MIN_VAL = 99.1
+        self.MAX_VAL = 100.9
         self.D = int(((self.MAX_VAL - self.MIN_VAL) * 10) * 3) + 1  # times 3 for the 3 possible current_position values
         self.Qmus_estimates_mu = np.zeros((3, self.D))
         self.Qmus_estimates_sd = np.ones((3, self.D))
@@ -123,6 +123,8 @@ class RLAgent:
         r_short = []
         s_long = []
         r_long = []
+        r_flat = []
+        s_flat = []
         for t in range(len(states)):
 
             idx = self.state_value_to_index(states[t])
@@ -132,12 +134,16 @@ class RLAgent:
             if actions[t] == 0:
                 s_short.append(idx)
                 r_short.append(rewards[t])
+            elif actions[t] == 1:
+                s_flat.append(idx)
+                r_flat.append(rewards[t])
             elif actions[t] == 2:
                 s_long.append(idx)
                 r_long.append(rewards[t])
 
         plt.scatter(s_short, r_short, color='red')
         plt.scatter(s_long, r_long, color='green')
+        plt.scatter(s_flat, r_flat, color='black')
         plt.title("State vs Reward scatter plot")
         plt.show()
 
@@ -165,26 +171,29 @@ class RLAgent:
                            likelihood(Qmus, Qsds),
                            observed=qvalues)
 
-            mean_field = pm.fit(n=5000, method='advi', obj_optimizer=pm.adam(learning_rate=0.1))
+            mean_field = pm.fit(n=15000, method='advi', obj_optimizer=pm.adam(learning_rate=0.1))
             self.trace = mean_field.sample(5000)
 
         self.Qmus_estimates = np.mean(self.trace['Qmus'], axis=0)
-        self.Qsds_estimates = np.median(self.trace['Qsds'], axis=0)
+        self.Qsds_estimates = np.mean(self.trace['Qsds'], axis=0)
 
         self.Qmus_estimates_mu = self.Qmus_estimates
         self.Qmus_estimates_sd = np.std(self.trace['Qmus'], axis=0)
 
-        self.Qsds_estimates_mu = self.Qmus_estimates
+        self.Qsds_estimates_mu = self.Qsds_estimates
         self.Qsds_estimates_sd = np.std(self.trace['Qsds'], axis=0)
 
         self.reset_memory()
         fig, axarr = plt.subplots(1, 2)
 
         axarr[0].plot(self.Qmus_estimates[0], color='red')
+        axarr[0].plot(self.Qmus_estimates[1], color='black')
         axarr[0].plot(self.Qmus_estimates[2], color='green')
+
         axarr[0].set_title("E[Q-values] for Short/Long action")
 
         axarr[1].plot(self.Qsds_estimates[0], color='red')
+        axarr[1].plot(self.Qsds_estimates[1], color='black')
         axarr[1].plot(self.Qsds_estimates[2], color='green')
         axarr[1].set_title("SD[Q-values] for Short/Long action")
 
